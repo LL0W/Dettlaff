@@ -9,14 +9,14 @@
 
 // Configuration Variables
 
-char wifiSsid[32] = "ssid";
-char wifiPass[63] = "pass";
+char wifiSsid[32] = "Speedy wifi beams";
+char wifiPass[63] = "dumbasshusbandenergy";
 uint8_t numMotors = 2; // 2 for single-stage, 4 for dual-stage
 uint32_t revRPM[4] = {50000, 50000, 50000, 50000};
 uint32_t idleRPM = 1000;
 uint32_t idleTime_ms = 30000; // how long to idle the flywheels for
 uint32_t motorKv = 2550;
-pins_t pins = pins_v0_4_noid;
+pins_t pins = pins_v0_3_n20;
 // Options:
 // pins_v0_4_n20
 // pins_v0_4_noid
@@ -25,7 +25,7 @@ pins_t pins = pins_v0_4_noid;
 // pins_v0_2
 // pins_v0_1
 // _noid means use the flywheel output to drive a solenoid pusher
-pusherType_t pusherType = PUSHER_SOLENOID_OPENLOOP;
+pusherType_t pusherType = PUSHER_MOTOR_CLOSEDLOOP;
 // PUSHER_MOTOR_CLOSEDLOOP or PUSHER_SOLENOID_OPENLOOP
 uint16_t burstLength = 3;
 uint8_t bufferMode = 1;
@@ -71,6 +71,8 @@ uint32_t scaledMotorKv = motorKv * 11; // motor kv * battery voltage resistor di
 uint8_t i = 0; // for loops later on
 const uint32_t maxThrottle = 1999;
 uint32_t motorRPM[4] = {0, 0, 0, 0};
+String telemBuffer = "";
+uint8_t telemMotorNum = 0; // 0-3
 
 Bounce2::Button revSwitch = Bounce2::Button();
 Bounce2::Button triggerSwitch = Bounce2::Button();
@@ -87,6 +89,10 @@ void WiFiInit();
 void setup() {
   Serial.begin(115200);
   Serial.println("Booting");
+  Serial2.begin(115200, SERIAL_8N1, 16, 4); // TO DO: check the TX pin with later board revisions.
+                                            // Need to find a pin we're not using to assign anything
+                                            // to for the TX pin as the ESC receive data.
+  pinMode(16, INPUT_PULLUP);
   if (pins.flywheel) {
     pinMode(pins.flywheel, OUTPUT);
     digitalWrite(pins.flywheel, HIGH);
@@ -142,6 +148,9 @@ void loop() {
 
   // *Need to implement*
   // Get flywheel RPM data, store it in motorRPM
+  // if (Serial2.available()) {
+    Serial.print(Serial2.readString());
+  // }
 
   if (triggerSwitch.pressed()) { // pressed and released are transitions, isPressed is for state
     if (bufferMode == 0) {
@@ -184,11 +193,12 @@ void loop() {
       if (closedLoopFlywheels) {
         // Algorithm to determine if flywheels are up to speed
         // in the future add predictive capacity for when they'll be up to speed in the future
-        for (i = 0; i < numMotors; i++) {
-          if (motorRPM[i] < firingRPM[i])
-            break; // THIS STATEMENT IS POTENTIALLY PROBLEMATIC
+        if ( motorRPM[0] > firingRPM[0] &&
+           (numMotors <= 1 || motorRPM[1] > firingRPM[1]) &&
+           (numMotors <= 2 || motorRPM[2] > firingRPM[2]) &&
+           (numMotors <= 3 || motorRPM[3] > firingRPM[3]) ) {
+          flywheelState = STATE_FULLSPEED;
         }
-        flywheelState = STATE_FULLSPEED;
 
         // Use current flywheel speeds, save them to motorRPM[4]
           // need to add the check somewhere else
@@ -253,6 +263,22 @@ void loop() {
 
   if (closedLoopFlywheels) {
     // --ray-- Andrew's control code goes here
+    
+    // // Telemetry updating
+    // // If there has been a new serial update, then record the data and update telemMotorNum
+    // // to monitor for data from the next motor in the sequence.
+
+    // // Concatenate what's already in the buffer with the incoming data.
+    // if (Serial2.available()) {
+    //   telemBuffer += Serial2.readString();
+    // }
+
+    // // Check for an incomplete packet (somehow)
+    // // If it contains a full packet then parse the packet, store desired values, and clear buffer.
+    // // If the packet is incomplete, store it and wait for the next part of the packet from the ESC.
+    // // After getting second part, concat with first to have the complete packet.
+    
+
   } else { // open loop case
     for (i = 0; i < numMotors; i++) {
       if (throttleValue[i] == 0) {
@@ -273,7 +299,11 @@ void loop() {
     }
   } else {
     for (i = 0; i < numMotors; i++) {
+      if (i == telemMotorNum) {
+        dshot[i].send_dshot_value(throttleValue[i] + 48, ENABLE_TELEMETRIC);
+      } else {
       dshot[i].send_dshot_value(throttleValue[i] + 48, NO_TELEMETRIC);
+      } 
     }
   }
   ArduinoOTA.handle();
